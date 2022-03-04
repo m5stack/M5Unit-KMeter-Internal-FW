@@ -84,7 +84,7 @@ namespace command_processor
   static constexpr uint8_t UPDATE_RESULT_BUSY   = 0xFF;
 
   // register list
-  // index : 0x00 - 0x03 = (const) temperature data (MAX6675/MAX31855 SPI read)
+  // index : 0x00 - 0x03 = (read ) temperature data (MAX6675/MAX31855 SPI read)
   // index : 0x04        = (const) device id ( 0x31 )
   // index : 0x05        = (const) device id ( 0x85 )
   // index : 0x06        = (const) major version
@@ -278,7 +278,7 @@ namespace command_processor
         .duty_cycle_pos = 0,
         .cs_ena_pretrans = 0,
         .cs_ena_posttrans = 0,
-        .clock_speed_hz = 4300000,
+        .clock_speed_hz = 1000000,
         .input_delay_ns = 0,
         .spics_io_num = PIN_CS,
         .flags = 0,
