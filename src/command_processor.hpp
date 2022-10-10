@@ -16,4 +16,15 @@ namespace command_processor
   bool addData(std::uint8_t value);
   void closeData(void);
   void prepareTxData(void);
+
+  enum proc_t
+  {
+    proc_main,
+    proc_spi,
+    proc_i2c,
+    proc_max,
+  };
+
+  void setActive(proc_t proc);
+  void setDeactive(proc_t proc);
 }

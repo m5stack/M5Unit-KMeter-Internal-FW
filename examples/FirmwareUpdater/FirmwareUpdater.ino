@@ -1,6 +1,4 @@
 #include <Arduino.h>
-#include <M5UnitLCD.h>
-#include <M5UnitOLED.h>
 #include <M5Unified.h>
 #include <esp_spi_flash.h>
 
@@ -108,10 +106,10 @@ bool update(void)
     }
     Serial.println("ok");
     /// ビジーチェック
-    int retry = 100;
+    int retry = 500;
     do
     {
-      delay(50);
+      delay(10);
       readbuf[0] = UPDATE_RESULT_BUSY;
       if (!M5.Ex_I2C.start(I2C_ADDR, true, 400000)
        || !M5.Ex_I2C.read(readbuf, 1)
@@ -183,6 +181,7 @@ void setup(void)
   Serial.begin(115200);
 
   M5.begin();
+  M5.Power.setExtPower(true);
   M5.Ex_I2C.begin();
   M5.Display.setEpdMode(lgfx::epd_mode_t::epd_fastest);
 

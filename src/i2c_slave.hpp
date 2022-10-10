@@ -18,6 +18,8 @@ namespace i2c_slave
   void start_isr(void);
   void stop_isr(void);
   void reset(void);
+  void set_txdata(const std::uint8_t* buf, std::size_t len);
+  void set_txdata(std::uint8_t data, std::size_t len);
   void add_txdata(const std::uint8_t* buf, std::size_t len);
   void add_txdata(std::uint8_t buf);
   void clear_txdata(void);

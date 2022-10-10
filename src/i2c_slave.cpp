@@ -22,7 +22,7 @@ namespace i2c_slave
 {
   static constexpr std::size_t soc_i2c_fifo_len = 32;
   static constexpr std::uint32_t i2c_intr_mask = 0x3fff;  /*!< I2C all interrupt bitmap */
-  static constexpr std::uint32_t I2C_TXFIFO_EMPTY_THRESH_VAL     = 4;
+  static constexpr std::uint32_t I2C_TXFIFO_EMPTY_THRESH_VAL     = 8;
   static constexpr std::uint32_t I2C_RXFIFO_FULL_THRESH_VAL      = 1;
   static constexpr std::uint32_t I2C_SLAVE_TIMEOUT_DEFAULT     = 0xFFFFF; /* I2C slave timeout value, APB clock cycle number */
   static constexpr std::uint32_t I2C_SLAVE_SDA_SAMPLE_DEFAULT  = 4;       /* I2C slave sample time after scl positive edge default value */
@@ -34,24 +34,33 @@ namespace i2c_slave
     i2c_port_t i2c_num;   // I2C port number
     xTaskHandle main_handle = nullptr;
     std::uint32_t addr;   // I2C slave addr
+    gpio_num_t sda;
+    gpio_num_t scl;
   };
 
   i2c_obj_t i2c_obj;
 
-  static i2c_dev_t* getDev(i2c_port_t num)
+  static __attribute__((always_inline)) inline 
+  i2c_dev_t* IRAM_ATTR getDev(i2c_port_t num)
   {
     return &I2C0;
   }
-  static periph_module_t getPeriphModule(i2c_port_t num)
+
+  static __attribute__((always_inline)) inline 
+  periph_module_t getPeriphModule(i2c_port_t num)
   {
     return PERIPH_I2C0_MODULE;
 //  return (num == 0) ? PERIPH_I2C0_MODULE : PERIPH_I2C1_MODULE;
   }
-  static std::uintptr_t getFifoAddr(i2c_port_t num)
+
+  static __attribute__((always_inline)) inline 
+  std::uintptr_t IRAM_ATTR getFifoAddr(i2c_port_t num)
   {
     return (std::uintptr_t)&(I2C0.fifo_data);
   }
-  static periph_interrput_t getIntrSource(i2c_port_t num)
+
+  static __attribute__((always_inline)) inline 
+  periph_interrput_t getIntrSource(i2c_port_t num)
   {
     return ETS_I2C_EXT0_INTR_SOURCE;
 //  return (num == 0) ? ETS_I2C_EXT0_INTR_SOURCE : ETS_I2C_EXT1_INTR_SOURCE;
@@ -61,7 +70,6 @@ namespace i2c_slave
   {
     auto dev = getDev(i2c_obj.i2c_num);
     return dev->sr.bus_busy;
-    // return dev->status_reg.bus_busy;
   }
 
   uint32_t IRAM_ATTR getTxCount(void)
@@ -72,52 +80,75 @@ namespace i2c_slave
 
   static void IRAM_ATTR i2c_isr_handler(void *arg)
   {
+    command_processor::setActive(command_processor::proc_i2c);
+
     auto p_i2c = (i2c_obj_t*)arg;
     auto dev = getDev(p_i2c->i2c_num);
 
-    typeof(dev->int_status) int_sts;
-    int_sts.val = dev->int_status.val;
-    dev->int_clr.val = int_sts.val;
+    bool busy = true;
 
-    std::uint32_t rx_fifo_cnt = dev->sr.rx_fifo_cnt;
-    if (rx_fifo_cnt)
+    bool notify = false;
+
+    dev->int_ena.byte_trans_done = true;
+    do
     {
-      bool notify = false;
-      do
+      typeof(dev->int_status) int_sts;
+      int_sts.val = dev->int_status.val;
+      dev->int_clr.val = int_sts.val;
+
+      if (int_sts.det_start)
       {
-        if (command_processor::addData(dev->fifo_data.val))
-        {
-          notify = true;
-        }  
-      } while (--rx_fifo_cnt);
-      if (notify)
-      {
-        BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-        vTaskNotifyGiveFromISR(p_i2c->main_handle, &xHigherPriorityTaskWoken);
-        portYIELD_FROM_ISR();
+        command_processor::closeData();
+        busy = true;
       }
-    }
-    // if (int_sts.trans_complete || int_sts.trans_start || int_sts.arbitration_lost)
-    if (int_sts.trans_complete || int_sts.arbitration_lost)
+      std::uint32_t rx_fifo_cnt = dev->sr.rx_fifo_cnt;
+      if (rx_fifo_cnt)
+      {
+        do
+        {
+          if (command_processor::addData(dev->fifo_data.val))
+          {
+            notify = true;
+          }
+        } while (--rx_fifo_cnt);
+      }
+
+      if (!dev->sr.slave_addressed && (int_sts.byte_trans_done || int_sts.trans_complete))
+      { // 別のスレーブとの通信に反応しないよう以後のbyte_trans_doneを抑止する
+        // trans_completeの時点で再設定する
+          dev->int_ena.byte_trans_done = int_sts.trans_complete;
+          busy = false;
+      }
+
+      if (dev->sr.slave_rw && dev->sr.tx_fifo_cnt <= I2C_TXFIFO_EMPTY_THRESH_VAL)
+      {
+        command_processor::prepareTxData();
+      }
+
+      if (notify && !dev->int_status.val) {
+        BaseType_t xHigherPriorityTaskWoken = pdTRUE;
+        vTaskNotifyGiveFromISR(p_i2c->main_handle, &xHigherPriorityTaskWoken);
+      }
+    } while (dev->int_status.val || dev->sr.rx_fifo_cnt);
+
+    if (!busy && !dev->int_status.val)
     {
-      clear_txdata();
-      command_processor::closeData();
-    }
-    // if (int_sts.tx_fifo_empty)
-    // if (int_sts.tx_fifo_wm)
-    if (dev->sr.tx_fifo_cnt < 8)
-    {
-      command_processor::prepareTxData();
+      command_processor::setDeactive(command_processor::proc_i2c);
+      portYIELD_FROM_ISR();
     }
   }
 
   void IRAM_ATTR clear_txdata(void)
   {
     auto dev = getDev(i2c_obj.i2c_num);
-    // dev->int_ena.tx_fifo_empty = false;
-    dev->int_ena.tx_fifo_wm = false;
     dev->fifo_conf.tx_fifo_rst = 1;
     dev->fifo_conf.tx_fifo_rst = 0;
+  }
+
+  void IRAM_ATTR add_txdata(std::uint8_t buf)
+  {
+    uint32_t fifo_addr = getFifoAddr(i2c_obj.i2c_num);
+    WRITE_PERI_REG(fifo_addr, buf);
   }
 
   void IRAM_ATTR add_txdata(const std::uint8_t* buf, std::size_t len)
@@ -128,28 +159,39 @@ namespace i2c_slave
       WRITE_PERI_REG(fifo_addr, buf[i]);
     }
     auto dev = getDev(i2c_obj.i2c_num);
-    dev->int_clr.tx_fifo_wm = true;
-    dev->int_ena.tx_fifo_wm = true;
-  }
+    }
 
-  void IRAM_ATTR add_txdata(std::uint8_t buf)
+  void IRAM_ATTR set_txdata(const std::uint8_t* buf, std::size_t len)
   {
-    uint32_t fifo_addr = getFifoAddr(i2c_obj.i2c_num);
-    WRITE_PERI_REG(fifo_addr, buf);
     auto dev = getDev(i2c_obj.i2c_num);
-    dev->int_clr.tx_fifo_wm = true;
-    dev->int_ena.tx_fifo_wm = true;
+    dev->fifo_conf.tx_fifo_rst = 1;
+    dev->fifo_conf.tx_fifo_rst = 0;
+    uint32_t fifo_addr = getFifoAddr(i2c_obj.i2c_num);
+    do {
+        WRITE_PERI_REG(fifo_addr, *buf++);
+    } while (--len);
+  }
+  void IRAM_ATTR set_txdata(std::uint8_t data, std::size_t len)
+  {
+    auto dev = getDev(i2c_obj.i2c_num);
+    dev->fifo_conf.tx_fifo_rst = 1;
+    dev->fifo_conf.tx_fifo_rst = 0;
+    uint32_t fifo_addr = getFifoAddr(i2c_obj.i2c_num);
+    do {
+        WRITE_PERI_REG(fifo_addr, data);
+    } while (--len);
   }
 
   void IRAM_ATTR start_isr(void)
   {
     auto dev = getDev(i2c_obj.i2c_num);
+    dev->int_clr.val = dev->int_raw.val;
+// I2C_BYTE_TRANS_DONE_INT_ENA // 通信相手によらず、1Byte転送の完了を検出すると発生
+// I2C_DET_START_INT_ENA      // 通信相手によらず、I2C STARTコンディションを検出すると発生
+// I2C_TRANS_COMPLETE_INT_ENA // 通信相手によらず、I2C STOPコンディションを検出すると発生
     dev->int_ena.val = I2C_DET_START_INT_ENA
                      | I2C_TRANS_COMPLETE_INT_ENA
-                     | I2C_ARBITRATION_LOST_INT_ENA
                      | I2C_BYTE_TRANS_DONE_INT_ENA
-                     | I2C_TXFIFO_WM_INT_ENA
-                     | I2C_RXFIFO_WM_INT_ENA
                      ;
   }
 
@@ -157,12 +199,15 @@ namespace i2c_slave
   {
     auto dev = getDev(i2c_obj.i2c_num);
     dev->int_ena.val = 0;
-    dev->int_clr.val = i2c_intr_mask;
+    dev->int_clr.val = dev->int_raw.val;
   }
 
   void IRAM_ATTR i2c_periph_start(void)
   {
     stop_isr();
+
+    i2c_set_pin(i2c_obj.i2c_num, i2c_obj.sda, i2c_obj.scl, GPIO_PULLUP_ENABLE, GPIO_PULLUP_ENABLE, I2C_MODE_SLAVE);
+
     periph_module_enable(getPeriphModule(i2c_obj.i2c_num));
 
     auto dev = getDev(i2c_obj.i2c_num);
@@ -171,9 +216,11 @@ namespace i2c_slave
     ctrl_reg.val = 0;
     ctrl_reg.sda_force_out = 1;
     ctrl_reg.scl_force_out = 1;
+    ctrl_reg.slv_tx_auto_start_en = 1;
     dev->ctr.val = ctrl_reg.val;
 
     typeof(dev->fifo_conf) fifo_conf;
+    dev->fifo_conf.tx_fifo_rst = 1;
     fifo_conf.val = 0;
     fifo_conf.tx_fifo_wm_thrhd = I2C_TXFIFO_EMPTY_THRESH_VAL;
     fifo_conf.rx_fifo_wm_thrhd = I2C_RXFIFO_FULL_THRESH_VAL;
@@ -185,7 +232,7 @@ namespace i2c_slave
     dev->sda_hold.time = I2C_SLAVE_SDA_HOLD_DEFAULT;
     dev->sda_sample.time = I2C_SLAVE_SDA_SAMPLE_DEFAULT;
 
-    dev->ctr.slv_tx_auto_start_en = 1;
+    dev->scl_stretch_conf.val = 0;
 
     // dev->timeout.tout = I2C_SLAVE_TIMEOUT_DEFAULT;
     // dev->scl_filter_cfg.en = 1;
@@ -209,15 +256,16 @@ namespace i2c_slave
   {
     i2c_obj.i2c_num = (i2c_port_t)i2c_num;
     i2c_obj.addr = i2c_addr;
+    i2c_obj.sda = (gpio_num_t)pin_sda;
+    i2c_obj.scl = (gpio_num_t)pin_scl;
     i2c_obj.main_handle = mainHandle;
 
-    if ((ESP_OK == i2c_set_pin(i2c_obj.i2c_num, pin_sda, pin_scl, GPIO_PULLUP_ENABLE, GPIO_PULLUP_ENABLE, I2C_MODE_SLAVE))
-    && (ESP_OK == esp_intr_alloc( i2c_periph_signal[i2c_num].irq
+    if (ESP_OK == esp_intr_alloc( i2c_periph_signal[i2c_num].irq
                         , ESP_INTR_FLAG_IRAM | ESP_INTR_FLAG_LEVEL3
                         , i2c_isr_handler
                         , &i2c_obj
                         , &(i2c_obj.intr_handle)
-                        )))
+                        ))
     {
       i2c_periph_start();
       return true;

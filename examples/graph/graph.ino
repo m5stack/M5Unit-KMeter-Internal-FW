@@ -21,6 +21,7 @@ static float min_temp;
 static float max_temp;
 static float avg_buf[avg_count];
 static size_t avg_index = 0;
+static int vertline_idx = 0;
 
 UNIT_KMeter sensor;
 
@@ -75,7 +76,6 @@ void setup(void)
   }
 }
 
-static int vertline_idx = 0;
 
 void drawGraph(void)
 {
