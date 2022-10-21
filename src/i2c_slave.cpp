@@ -22,7 +22,7 @@ namespace i2c_slave
 {
   static constexpr std::size_t soc_i2c_fifo_len = 32;
   static constexpr std::uint32_t i2c_intr_mask = 0x3fff;  /*!< I2C all interrupt bitmap */
-  static constexpr std::uint32_t I2C_TXFIFO_EMPTY_THRESH_VAL     = 8;
+  static constexpr std::uint32_t I2C_TXFIFO_EMPTY_THRESH_VAL     = 4;
   static constexpr std::uint32_t I2C_RXFIFO_FULL_THRESH_VAL      = 1;
   static constexpr std::uint32_t I2C_SLAVE_TIMEOUT_DEFAULT     = 0xFFFFF; /* I2C slave timeout value, APB clock cycle number */
   static constexpr std::uint32_t I2C_SLAVE_SDA_SAMPLE_DEFAULT  = 4;       /* I2C slave sample time after scl positive edge default value */
@@ -85,56 +85,38 @@ namespace i2c_slave
     auto p_i2c = (i2c_obj_t*)arg;
     auto dev = getDev(p_i2c->i2c_num);
 
-    bool busy = true;
-
-    bool notify = false;
-
+    typeof(dev->int_status) int_sts;
+    int_sts.val = dev->int_status.val;
+    dev->int_clr.val = int_sts.val;
     dev->int_ena.byte_trans_done = true;
-    do
+
+    if (int_sts.det_start)
     {
-      typeof(dev->int_status) int_sts;
-      int_sts.val = dev->int_status.val;
-      dev->int_clr.val = int_sts.val;
+      command_processor::closeData();
+    }
 
-      if (int_sts.det_start)
-      {
-        command_processor::closeData();
-        busy = true;
-      }
-      std::uint32_t rx_fifo_cnt = dev->sr.rx_fifo_cnt;
-      if (rx_fifo_cnt)
-      {
-        do
-        {
-          if (command_processor::addData(dev->fifo_data.val))
-          {
-            notify = true;
-          }
-        } while (--rx_fifo_cnt);
-      }
-
-      if (!dev->sr.slave_addressed && (int_sts.byte_trans_done || int_sts.trans_complete))
-      { // 別のスレーブとの通信に反応しないよう以後のbyte_trans_doneを抑止する
-        // trans_completeの時点で再設定する
-          dev->int_ena.byte_trans_done = int_sts.trans_complete;
-          busy = false;
-      }
-
-      if (dev->sr.slave_rw && dev->sr.tx_fifo_cnt <= I2C_TXFIFO_EMPTY_THRESH_VAL)
-      {
-        command_processor::prepareTxData();
-      }
-
-      if (notify && !dev->int_status.val) {
-        BaseType_t xHigherPriorityTaskWoken = pdTRUE;
-        vTaskNotifyGiveFromISR(p_i2c->main_handle, &xHigherPriorityTaskWoken);
-      }
-    } while (dev->int_status.val || dev->sr.rx_fifo_cnt);
-
-    if (!busy && !dev->int_status.val)
+    std::uint32_t rx_fifo_cnt = dev->sr.rx_fifo_cnt;
+    if (rx_fifo_cnt)
     {
-      command_processor::setDeactive(command_processor::proc_i2c);
-      portYIELD_FROM_ISR();
+      do
+      {
+        command_processor::addData(dev->fifo_data.val);
+      } while (--rx_fifo_cnt);
+    }
+    if (dev->sr.slave_rw && dev->sr.tx_fifo_cnt <= I2C_TXFIFO_EMPTY_THRESH_VAL)
+    {
+      command_processor::prepareTxData();
+    }
+
+    if (!dev->sr.slave_addressed && (int_sts.val & (I2C_BYTE_TRANS_DONE_INT_ENA | I2C_TRANS_COMPLETE_INT_ENA)))
+    { // 別のスレーブとの通信に反応しないよう以後のbyte_trans_doneを抑止する
+      // trans_completeの時点で再設定する
+      dev->int_ena.byte_trans_done = int_sts.trans_complete;
+
+      if (!dev->int_status.val)
+      {
+        command_processor::setDeactive(command_processor::proc_i2c);
+      }
     }
   }
 

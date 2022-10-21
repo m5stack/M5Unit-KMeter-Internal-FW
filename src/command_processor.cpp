@@ -179,8 +179,7 @@ namespace command_processor
 
     for (;;)
     {
-      if (_last_command == CMD_REG_ACCESS)      
-      {
+      if (_firmupdate_state == firmupdate_state_t::nothing) {
         gpio_lo(PIN_CS);
         WRITE_PERI_REG(SPI_CLK_GATE_REG(spi_port), SPI_CLK_EN | SPI_MST_CLK_ACTIVE);
         WRITE_PERI_REG(SPI_CMD_REG(spi_port), SPI_EXECUTE);
@@ -296,6 +295,7 @@ namespace command_processor
       {
         _firmupdate_result = UPDATE_RESULT_OK;
       }
+      i2c_slave::set_txdata(_firmupdate_result, 8);
 
       _firmupdate_state = firmupdate_state_t::wait_data;
       _firmupdate_index += SPI_FLASH_SEC_SIZE;
@@ -411,10 +411,8 @@ namespace command_processor
     *gpio_reg = 1 << (PIN_LED & 31);
 #endif
 
-    TickType_t tick_delay = portMAX_DELAY;
-    if (reg_chagned || cmd_changed) tick_delay = 100ul;
     setDeactive(proc_main);
-    ulTaskNotifyTake( pdTRUE, tick_delay);
+    vTaskDelay(1);
     setActive(proc_main);
 
     command();
@@ -518,17 +516,21 @@ namespace command_processor
         break;
 
       case CMD_REG_ACCESS:
-        if (write_reg_index < register_virtual_size)
         {
-          if (register_data[write_reg_index] != _params[1])
+          int wridx = write_reg_index;
+          if (wridx < register_virtual_size)
           {
-            register_data[write_reg_index] = _params[1];
-            reg_chagned = write_reg_index < register_storage_size;
-            cmd_changed = write_reg_index < register_virtual_size;
+            uint8_t val = _params[1];
+            if (register_data[wridx] != val)
+            {
+              register_data[wridx] = val;
+              reg_chagned = wridx < register_storage_size;
+            }
+            cmd_changed = wridx >= register_storage_size;
           }
+          write_reg_index = wridx + 1;
+          --_param_index;
         }
-        ++write_reg_index;
-        --_param_index;
         return reg_chagned || cmd_changed;
 
       /// ファームウェアアップデートの準備コマンド;
@@ -538,6 +540,8 @@ namespace command_processor
          && (_params[0] == _params[3])
         )
         {
+          setActive(proc_updater);
+
           _firmupdate_state = firmupdate_state_t::wait_data;
           _firmupdate_index = 0;
           _firmupdate_result = UPDATE_RESULT_ERROR; /// 途中中断した時のためリード応答にはエラーステートを設定しておく;

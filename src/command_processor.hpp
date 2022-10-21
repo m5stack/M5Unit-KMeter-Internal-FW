@@ -22,6 +22,7 @@ namespace command_processor
     proc_main,
     proc_spi,
     proc_i2c,
+    proc_updater,
     proc_max,
   };
 

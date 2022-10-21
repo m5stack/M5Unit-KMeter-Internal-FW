@@ -96,7 +96,7 @@ namespace update
     return _crc32 == _calc_crc32;
   }
 
-  static void writeTask(void* args)
+  static void IRAM_ATTR writeTask(void* args)
   {
     auto info = (write_info_t*)args;
     if ((!info->finish && (ESP_OK != esp_partition_erase_range(_partition, info->offset, SPI_FLASH_SEC_SIZE)))
@@ -112,7 +112,7 @@ namespace update
     vTaskDelete(nullptr);
   }
 
-  static bool write(std::uint8_t* buf, std::size_t offset, std::size_t len, bool finish)
+  static bool IRAM_ATTR write(std::uint8_t* buf, std::size_t offset, std::size_t len, bool finish)
   {
     write_info_t info;
     info.buffer = buf;
@@ -120,12 +120,12 @@ namespace update
     info.len = len;
     info.finish = finish;
 
-    xTaskCreatePinnedToCore(writeTask, "writeTask", 4096, &info, 2, nullptr, 0);
+    xTaskCreatePinnedToCore(writeTask, "writeTask", 4096, &info, 3, nullptr, 0);
     while (info.status == write_info_t::status_t::none) taskYIELD();
     return info.status == write_info_t::status_t::ok;
   }
 
-  bool writeBuffer(std::size_t offset)
+  bool IRAM_ATTR writeBuffer(std::size_t offset)
   {
     auto len = _bufindex;
     if (!len) return false;
