@@ -47,7 +47,7 @@ namespace command_processor
   static spi_device_handle_t spi_handle = nullptr;
   static uint32_t read_reg_index = 0;
   static int32_t write_reg_index = -1;
-  static bool reg_chagned = false;
+  static bool reg_changed = false;
   static bool cmd_changed = false;
   static constexpr size_t register_storage_size = 16;
   static constexpr size_t register_virtual_size = 17;
@@ -55,8 +55,7 @@ namespace command_processor
   static constexpr uint8_t I2C_MIN_ADDR = 0x08;
   static constexpr uint8_t I2C_MAX_ADDR = 0x77;
 
-
-  static constexpr std::size_t RX_BUFFER_MAX = 0x200;
+  static constexpr std::size_t RX_BUFFER_MAX = 0x10;
   static constexpr std::size_t PARAM_MAXLEN = 12;
   volatile std::size_t _rx_buffer_setpos = 0;
   volatile std::size_t _rx_buffer_getpos = 0;
@@ -125,7 +124,7 @@ namespace command_processor
 
   static IRAM_ATTR void logRegData(void)
   {
-    ESP_EARLY_LOGI(LOGNAME, "reg: %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x"
+    ESP_EARLY_LOGV(LOGNAME, "reg: %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x"
             , register_data[0x00], register_data[0x01], register_data[0x02], register_data[0x03]
             , register_data[0x04], register_data[0x05], register_data[0x06], register_data[0x07]
             , register_data[0x08], register_data[0x09], register_data[0x0A], register_data[0x0B]
@@ -412,16 +411,16 @@ namespace command_processor
 #endif
 
     setDeactive(proc_main);
-    vTaskDelay(1);
+    vTaskDelay(2);
     setActive(proc_main);
 
     command();
 
     if (_firmupdate_state == firmupdate_state_t::nothing && !i2c_slave::is_busy())
     {
-      if (reg_chagned)
+      if (reg_changed)
       {
-        reg_chagned = false;
+        reg_changed = false;
         save_nvs();
       }
 
@@ -479,11 +478,10 @@ namespace command_processor
     {
       _last_command = value;
       _param_resetindex = 0;
-// ESP_EARLY_LOGE(LOGNAME, "CMD:%02x", value);
+// ESP_EARLY_LOGD(LOGNAME, "CMD:%02x", value);
       switch (value)
       {
       default:
-// ESP_EARLY_LOGE(LOGNAME, "set_txdata");
         value &= 31;
         i2c_slave::set_txdata(&register_data[value], 32);
         read_reg_index  = value + 32;
@@ -524,14 +522,14 @@ namespace command_processor
             if (register_data[wridx] != val)
             {
               register_data[wridx] = val;
-              reg_chagned = wridx < register_storage_size;
+              reg_changed |= wridx < register_storage_size;
             }
-            cmd_changed = wridx >= register_storage_size;
+            cmd_changed |= wridx >= register_storage_size;
           }
           write_reg_index = wridx + 1;
           --_param_index;
         }
-        return reg_chagned || cmd_changed;
+        return reg_changed || cmd_changed;
 
       /// ファームウェアアップデートの準備コマンド;
       case CMD_UPDATE_BEGIN:

@@ -9,6 +9,6 @@
 static constexpr char LOGNAME[] = "M5UnitKmeter";
 static constexpr std::uint8_t DEVICE_ID_0 = 0x31;
 static constexpr std::uint8_t DEVICE_ID_1 = 0x85;
-static constexpr std::uint8_t FIRMWARE_MAJOR_VERSION = 0;
-static constexpr std::uint8_t FIRMWARE_MINOR_VERSION = 3;
+static constexpr std::uint8_t FIRMWARE_MAJOR_VERSION = 1;
+static constexpr std::uint8_t FIRMWARE_MINOR_VERSION = 0;
 
