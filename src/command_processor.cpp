@@ -189,12 +189,19 @@ namespace command_processor
         gpio_hi(PIN_CS);
         WRITE_PERI_REG(SPI_CLK_GATE_REG(spi_port), 0);
 #if CORE_DEBUG_LEVEL > 0
-        uint16_t thermocouple = (register_data[0] << 8) + register_data[1];
-        ESP_EARLY_LOGV(LOGNAME, "0x%04x  %4.2f c'", thermocouple, (float)(thermocouple >> 3) * 0.25f);
+        ESP_EARLY_LOGV(LOGNAME, "SENSOR DATA %02x %02x %02x %02x", register_data[0], register_data[1], register_data[2], register_data[3]);
 #endif
       }
+      uint32_t delaytime = 200 / portTICK_PERIOD_MS;
+      if (register_data[1] & 1 || register_data[3] & 7) {
+        delaytime = 10 / portTICK_PERIOD_MS;
+#if CORE_DEBUG_LEVEL > 0
+        ESP_EARLY_LOGI(LOGNAME, "SENSOR ERROR %02x %02x %02x %02x", register_data[0], register_data[1], register_data[2], register_data[3]);
+#endif
+        continue;
+      }
       setDeactive(proc_spi);
-      vTaskDelay(200 / portTICK_PERIOD_MS);
+      vTaskDelay(delaytime);
       setActive(proc_spi);
     }
   }
